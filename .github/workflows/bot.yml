@@ -1,0 +1,39 @@
+
+name: Kino Bot
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 */6 * * *"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: kino-bot
+  cancel-in-progress: true
+
+jobs:
+  run-bot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+
+    steps:
+      - name: Get repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install libraries
+        run: pip install -r requirements.txt
+
+      - name: Start bot
+        env:
+          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_REF_NAME: ${{ github.ref_name }}
+        run: python main.py
