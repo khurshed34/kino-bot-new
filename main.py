@@ -24,7 +24,7 @@ TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_ID = 6777943949
 
 MAIN_CHANNEL = "@kinoj90"
-STORAGE_CHANNEL = "@ripm6"
+STORAGE_CHANNEL = "@kusyi8"
 DB_FILE = "movies.json"
 
 GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")
