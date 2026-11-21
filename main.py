@@ -33,7 +33,7 @@ BRANCH = os.getenv("GITHUB_REF_NAME", "main")
 
 REQUIRED_CHANNELS = [
     {"id": "@merlin267", "url": "https://t.me/merlin267"},
-    {"id": -1004473443170, "url": "https://t.me/+gWWLvmg8BMsyZmUy"},
+    {"id": -1004307552065", "url": "https://t.me/+lb1ZPri4VWs3ZTUy"},
     {"id": "@kinoj90", "url": "https://t.me/kinoj90"}
 ]
 
