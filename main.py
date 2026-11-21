@@ -5,12 +5,14 @@ import base64
 import asyncio
 import urllib.request
 import urllib.error
+import logging
 
 from telegram import (
     Update,
     InlineKeyboardButton,
     InlineKeyboardMarkup
 )
+
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -20,36 +22,74 @@ from telegram.ext import (
     filters
 )
 
+# =========================
+# CONFIG
+# =========================
+
 TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_ID = 6777943949
 
 MAIN_CHANNEL = "@kinoj90"
 STORAGE_CHANNEL = "@kusyi8"
+REQUEST_CHANNEL = -1004307552065
+
+REQUEST_LINK = "https://t.me/+lb1ZPri4VWs3ZTUy"
+
 DB_FILE = "movies.json"
 
 GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")
-REPOSITORY = os.getenv("GITHUB_REPOSITORY", "khurshed34/kino-bot-new")
+REPOSITORY = os.getenv(
+    "GITHUB_REPOSITORY",
+    "khurshed34/kino-bot-new"
+)
 BRANCH = os.getenv("GITHUB_REF_NAME", "main")
 
 REQUIRED_CHANNELS = [
-    {"id": "@merlin267", "url": "https://t.me/merlin267"},
-    {"id": -1004307552065, "url": "https://t.me/+lb1ZPri4VWs3ZTUy"},
-    {"id": "@kinoj90", "url": "https://t.me/kinoj90"}
+    {
+        "id": "@merlin267",
+        "name": "Merlin",
+        "url": "https://t.me/merlin267"
+    },
+    {
+        "id": REQUEST_CHANNEL,
+        "name": "Канали заявка",
+        "url": REQUEST_LINK
+    },
+    {
+        "id": MAIN_CHANNEL,
+        "name": "Канали кино",
+        "url": "https://t.me/kinoj90"
+    }
 ]
+
+logging.basicConfig(
+    format="%(asctime)s - %(levelname)s - %(message)s",
+    level=logging.INFO
+)
+
+# =========================
+# DATABASE
+# =========================
 
 def load_db():
     try:
         with open(DB_FILE, "r", encoding="utf-8") as f:
             data = json.load(f)
-            if isinstance(data, dict):
-                data.setdefault("movies", {})
-                data.setdefault("users", [])
-                data.setdefault("requests", 0)
-                return data
-    except Exception:
-        pass
 
-    return {"movies": {}, "users": [], "requests": 0}
+        if isinstance(data, dict):
+            data.setdefault("movies", {})
+            data.setdefault("users", [])
+            data.setdefault("requests", 0)
+            return data
+
+    except Exception as error:
+        logging.warning("Database load error: %s", error)
+
+    return {
+        "movies": {},
+        "users": [],
+        "requests": 0
+    }
 
 
 db = load_db()
@@ -57,12 +97,17 @@ db = load_db()
 
 def save_local():
     with open(DB_FILE, "w", encoding="utf-8") as f:
-        json.dump(db, f, ensure_ascii=False, indent=2)
+        json.dump(
+            db,
+            f,
+            ensure_ascii=False,
+            indent=2
+        )
 
 
 def github_backup():
     if not GITHUB_TOKEN:
-        print("GITHUB_TOKEN missing")
+        logging.warning("GITHUB_TOKEN missing")
         return
 
     url = (
@@ -79,15 +124,29 @@ def github_backup():
     sha = None
 
     try:
-        req = urllib.request.Request(url, headers=headers)
-        with urllib.request.urlopen(req, timeout=30) as response:
-            sha = json.loads(response.read()).get("sha")
+        req = urllib.request.Request(
+            url,
+            headers=headers
+        )
+
+        with urllib.request.urlopen(
+            req,
+            timeout=30
+        ) as response:
+            sha = json.loads(
+                response.read()
+            ).get("sha")
+
     except urllib.error.HTTPError as error:
         if error.code != 404:
-            print("GitHub read error:", error)
+            logging.error("GitHub read error: %s", error)
             return
 
-    content = json.dumps(db, ensure_ascii=False, indent=2)
+    content = json.dumps(
+        db,
+        ensure_ascii=False,
+        indent=2
+    )
 
     payload = {
         "message": "Save movie database",
@@ -108,10 +167,17 @@ def github_backup():
     )
 
     try:
-        with urllib.request.urlopen(req, timeout=30) as response:
-            print("GitHub backup OK:", response.status)
+        with urllib.request.urlopen(
+            req,
+            timeout=30
+        ) as response:
+            logging.info(
+                "GitHub backup OK: %s",
+                response.status
+            )
+
     except Exception as error:
-        print("GitHub backup failed:", error)
+        logging.error("GitHub backup failed: %s", error)
 
 
 async def save_database():
@@ -119,40 +185,86 @@ async def save_database():
     await asyncio.to_thread(github_backup)
 
 
+# =========================
+# ADMIN
+# =========================
+
 def is_admin(user_id):
     return user_id == ADMIN_ID
 
 
 def admin_keyboard():
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("➕ Иловаи кино", callback_data="add")],
-        [InlineKeyboardButton("🗑 Нест кардани кино", callback_data="delete")],
-        [InlineKeyboardButton("📊 Омори бот", callback_data="stats")]
+        [
+            InlineKeyboardButton(
+                "➕ Иловаи кино",
+                callback_data="add"
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                "🗑 Нест кардани кино",
+                callback_data="delete"
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                "📊 Омори бот",
+                callback_data="stats"
+            )
+        ]
     ])
 
 
+# =========================
+# SUBSCRIPTION CHECK
+# =========================
+
 async def check_subscription(user_id, context):
     missing = []
+    errors = []
 
     for channel in REQUIRED_CHANNELS:
         try:
             member = await context.bot.get_chat_member(
-                channel["id"], user_id
+                chat_id=channel["id"],
+                user_id=user_id
             )
 
-            if member.status in ("member", "administrator", "creator"):
-                continue
+            status = member.status
 
-            if member.status == "restricted" and member.is_member:
-                continue
+            logging.info(
+                "SUB CHECK | USER=%s | CHANNEL=%s | STATUS=%s",
+                user_id,
+                channel["id"],
+                status
+            )
 
-            missing.append(channel)
+            subscribed = status in (
+                "member",
+                "administrator",
+                "creator"
+            )
+
+            if status == "restricted":
+                subscribed = member.is_member
+
+            if not subscribed:
+                missing.append(channel)
 
         except Exception as error:
-            print("Subscription error:", error)
-            missing.append(channel)
+            logging.error(
+                "SUB CHECK ERROR | CHANNEL=%s | %s",
+                channel["id"],
+                error
+            )
 
-    return missing
+            errors.append({
+                "channel": channel,
+                "error": str(error)
+            })
+
+    return missing, errors
 
 
 def sub_keyboard(missing):
@@ -161,7 +273,7 @@ def sub_keyboard(missing):
     for channel in missing:
         buttons.append([
             InlineKeyboardButton(
-                "➕ Обуна шудан",
+                "➕ Обуна: " + channel["name"],
                 url=channel["url"]
             )
         ])
@@ -176,15 +288,54 @@ def sub_keyboard(missing):
     return InlineKeyboardMarkup(buttons)
 
 
+# =========================
+# SUBSCRIPTION MESSAGE
+# =========================
+
+async def show_subscription_status(
+    message,
+    missing,
+    errors
+):
+    if errors:
+        await message.reply_text(
+            "⚠️ Бот натавонист обунаро дар баъзе каналҳо санҷад.\n\n"
+            "Эҳтимол бот дар яке аз каналҳо админ нест.\n"
+            "Админ бояд иҷозатҳои ботро тафтиш кунад.\n\n"
+            "Тафсилоти хато дар GitHub Actions Logs сабт шудааст."
+        )
+        return
+
+    if missing:
+        names = "\n".join(
+            "❌ " + channel["name"]
+            for channel in missing
+        )
+
+        await message.reply_text(
+            "❗ Шумо ҳанӯз ба ҳамаи каналҳо обуна нестед.\n\n"
+            f"{names}\n\n"
+            "Агар ба канали заявка дархост фиристода бошед, "
+            "то қабули он аз тарафи админ интизор шавед.",
+            reply_markup=sub_keyboard(missing)
+        )
+
+
+# =========================
+# SEND MOVIE
+# =========================
+
 async def send_movie(chat_id, context, code):
     movie = db["movies"].get(str(code))
 
     if not movie:
         await context.bot.send_message(
-            chat_id,
-            "❌ Ин кино дар база нест!"
+            chat_id=chat_id,
+            text="❌ Ин кино дар база нест!"
         )
         return
+
+    db["requests"] += 1
 
     await context.bot.send_video(
         chat_id=chat_id,
@@ -192,6 +343,12 @@ async def send_movie(chat_id, context, code):
         caption=movie.get("title", "🎬 Кино")
     )
 
+    await save_database()
+
+
+# =========================
+# START
+# =========================
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
@@ -210,25 +367,38 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if not context.args:
         await update.message.reply_text(
-            "🎬 Хуш омадед!\n"
-            "Барои гирифтани кино тугмаи Тамошоро аз канали мо пахш кунед."
+            "🎬 Хуш омадед!\n\n"
+            "Барои гирифтани кино тугмаи "
+            "«Тамошо»-ро аз канали мо пахш кунед."
         )
         return
 
     code = context.args[0]
     context.user_data["movie_code"] = code
 
-    missing = await check_subscription(user_id, context)
+    missing, errors = await check_subscription(
+        user_id,
+        context
+    )
 
-    if missing:
-        await update.message.reply_text(
-            "❗ Барои гирифтани кино ба ҳамаи каналҳо обуна шавед:",
-            reply_markup=sub_keyboard(missing)
+    if errors or missing:
+        await show_subscription_status(
+            update.message,
+            missing,
+            errors
         )
         return
 
-    await send_movie(update.effective_chat.id, context, code)
+    await send_movie(
+        update.effective_chat.id,
+        context,
+        code
+    )
 
+
+# =========================
+# CHECK BUTTON
+# =========================
 
 async def check_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -237,20 +407,40 @@ async def check_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     code = context.user_data.get("movie_code")
 
     if not code:
-        await query.message.reply_text("Рамзи кино ёфт нашуд.")
-        return
-
-    missing = await check_subscription(query.from_user.id, context)
-
-    if missing:
         await query.message.reply_text(
-            "❗ Ҳоло ба ҳамаи каналҳо обуна нестед:",
-            reply_markup=sub_keyboard(missing)
+            "❌ Рамзи кино ёфт нашуд.\n"
+            "Аз нав тугмаи Тамошоро пахш кунед."
         )
         return
 
-    await send_movie(query.message.chat_id, context, code)
+    missing, errors = await check_subscription(
+        query.from_user.id,
+        context
+    )
 
+    if errors or missing:
+        await show_subscription_status(
+            query.message,
+            missing,
+            errors
+        )
+        return
+
+    await query.message.reply_text(
+        "✅ Обунаи шумо тасдиқ шуд!\n"
+        "🎬 Кино фиристода мешавад..."
+    )
+
+    await send_movie(
+        query.message.chat_id,
+        context,
+        code
+    )
+
+
+# =========================
+# ADMIN BUTTONS
+# =========================
 
 async def admin_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -261,12 +451,14 @@ async def admin_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if query.data == "add":
         context.user_data["state"] = "full_video"
+
         await query.message.reply_text(
             "📹 Видеои пурраи киноро ба ман фиристед."
         )
 
     elif query.data == "delete":
         context.user_data["state"] = "delete"
+
         await query.message.reply_text(
             "Рамзи киноеро, ки нест кардан мехоҳед, фиристед."
         )
@@ -279,6 +471,10 @@ async def admin_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"🔎 Дархостҳо: {db['requests']}"
         )
 
+
+# =========================
+# ADMIN VIDEO
+# =========================
 
 async def admin_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update.effective_user.id):
@@ -306,14 +502,15 @@ async def admin_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
             context.user_data["state"] = "title"
 
             await update.message.reply_text(
-                "✅ Видео дар канали хусусӣ нигоҳ дошта шуд.\n"
+                "✅ Видео дар канали хусусӣ нигоҳ дошта шуд.\n\n"
                 "Акнун номи киноро нависед."
             )
 
         except Exception as error:
-            print("Storage error:", error)
+            logging.error("Storage error: %s", error)
+
             await update.message.reply_text(
-                "❌ Видео ба канали хусусӣ фиристода нашуд. "
+                "❌ Видео ба канали хусусӣ фиристода нашуд.\n"
                 "Иҷозати администраторро санҷед."
             )
 
@@ -322,8 +519,13 @@ async def admin_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "type": "video",
             "file_id": update.message.video.file_id
         }
+
         await publish_movie(update, context)
 
+
+# =========================
+# ADMIN PHOTO
+# =========================
 
 async def admin_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update.effective_user.id):
@@ -339,6 +541,10 @@ async def admin_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await publish_movie(update, context)
 
+
+# =========================
+# ADMIN TEXT
+# =========================
 
 async def admin_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update.effective_user.id):
@@ -360,7 +566,7 @@ async def admin_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data["state"] = "preview"
 
         await update.message.reply_text(
-            "🖼 Акнун сурат ё трейлери кӯтоҳ фиристед.\n"
+            "🖼 Акнун сурат ё трейлери кӯтоҳ фиристед.\n\n"
             "Агар пешнамоиш лозим набошад, /publish нависед."
         )
 
@@ -370,8 +576,10 @@ async def admin_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if code in db["movies"]:
             del db["movies"][code]
             await save_database()
+
             await update.message.reply_text(
-                f"✅ Кинои {code} нест карда шуд."
+                f"✅ Кинои {code} нест карда шуд.",
+                reply_markup=admin_keyboard()
             )
         else:
             await update.message.reply_text(
@@ -380,6 +588,10 @@ async def admin_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         context.user_data.clear()
 
+
+# =========================
+# PUBLISH MOVIE
+# =========================
 
 async def publish_movie(update, context):
     user_data = context.user_data
@@ -394,15 +606,28 @@ async def publish_movie(update, context):
         )
         return
 
-    numbers = [int(x) for x in db["movies"] if str(x).isdigit()]
+    numbers = [
+        int(x)
+        for x in db["movies"]
+        if str(x).isdigit()
+    ]
+
     code = str(max(numbers, default=100) + 1)
 
     bot_info = await context.bot.get_me()
-    watch_url = f"https://t.me/{bot_info.username}?start={code}"
 
-    keyboard = InlineKeyboardMarkup([[
-        InlineKeyboardButton("🎬 Тамошо", url=watch_url)
-    ]])
+    watch_url = (
+        f"https://t.me/{bot_info.username}?start={code}"
+    )
+
+    keyboard = InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton(
+                "🎬 Тамошо",
+                url=watch_url
+            )
+        ]
+    ])
 
     caption = (
         f"🎬 {title}\n\n"
@@ -415,7 +640,7 @@ async def publish_movie(update, context):
     try:
         if preview and preview["type"] == "photo":
             await context.bot.send_photo(
-                MAIN_CHANNEL,
+                chat_id=MAIN_CHANNEL,
                 photo=preview["file_id"],
                 caption=caption,
                 reply_markup=keyboard
@@ -423,7 +648,7 @@ async def publish_movie(update, context):
 
         elif preview and preview["type"] == "video":
             await context.bot.send_video(
-                MAIN_CHANNEL,
+                chat_id=MAIN_CHANNEL,
                 video=preview["file_id"],
                 caption=caption,
                 reply_markup=keyboard
@@ -431,7 +656,7 @@ async def publish_movie(update, context):
 
         else:
             await context.bot.send_message(
-                MAIN_CHANNEL,
+                chat_id=MAIN_CHANNEL,
                 text=caption,
                 reply_markup=keyboard
             )
@@ -445,21 +670,26 @@ async def publish_movie(update, context):
         await save_database()
 
         await update.effective_message.reply_text(
-            f"✅ Кино нашр шуд!\n"
+            "✅ Кино нашр шуд!\n\n"
             f"🎬 {title}\n"
             f"🔢 Рамз: {code}",
             reply_markup=admin_keyboard()
         )
 
     except Exception as error:
-        print("Publish error:", error)
+        logging.error("Publish error: %s", error)
+
         await update.effective_message.reply_text(
-            "❌ Нашри кино иҷро нашуд. "
+            "❌ Нашри кино иҷро нашуд.\n"
             "Иҷозати администраторро санҷед."
         )
 
     context.user_data.clear()
 
+
+# =========================
+# PUBLISH COMMAND
+# =========================
 
 async def publish_command(update, context):
     if not is_admin(update.effective_user.id):
@@ -470,6 +700,10 @@ async def publish_command(update, context):
 
     await publish_movie(update, context)
 
+
+# =========================
+# ADMIN COMMAND
+# =========================
 
 async def admin_command(update, context):
     if not is_admin(update.effective_user.id):
@@ -483,10 +717,35 @@ async def admin_command(update, context):
     )
 
 
-async def post_init(app):
-    print("KINO BOT STARTED")
-    print("Movies loaded:", len(db["movies"]))
+# =========================
+# CANCEL
+# =========================
 
+async def cancel_command(update, context):
+    if not is_admin(update.effective_user.id):
+        return
+
+    context.user_data.clear()
+
+    await update.message.reply_text(
+        "❌ Амалиёт бекор карда шуд.",
+        reply_markup=admin_keyboard()
+    )
+
+
+# =========================
+# STARTUP
+# =========================
+
+async def post_init(app):
+    logging.info("KINO BOT STARTED")
+    logging.info("Movies loaded: %s", len(db["movies"]))
+    logging.info("Request channel: %s", REQUEST_CHANNEL)
+
+
+# =========================
+# MAIN
+# =========================
 
 def main():
     if not TOKEN:
@@ -502,26 +761,36 @@ def main():
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("admin", admin_command))
     app.add_handler(CommandHandler("publish", publish_command))
+    app.add_handler(CommandHandler("cancel", cancel_command))
 
-    app.add_handler(CallbackQueryHandler(
-        check_button, pattern="^check$"
-    ))
+    app.add_handler(
+        CallbackQueryHandler(
+            check_button,
+            pattern="^check$"
+        )
+    )
 
-    app.add_handler(CallbackQueryHandler(
-        admin_buttons, pattern="^(add|delete|stats)$"
-    ))
+    app.add_handler(
+        CallbackQueryHandler(
+            admin_buttons,
+            pattern="^(add|delete|stats)$"
+        )
+    )
 
-    app.add_handler(MessageHandler(
-        filters.VIDEO, admin_video
-    ))
+    app.add_handler(
+        MessageHandler(filters.VIDEO, admin_video)
+    )
 
-    app.add_handler(MessageHandler(
-        filters.PHOTO, admin_photo
-    ))
+    app.add_handler(
+        MessageHandler(filters.PHOTO, admin_photo)
+    )
 
-    app.add_handler(MessageHandler(
-        filters.TEXT & ~filters.COMMAND, admin_text
-    ))
+    app.add_handler(
+        MessageHandler(
+            filters.TEXT & ~filters.COMMAND,
+            admin_text
+        )
+    )
 
     app.run_polling(
         allowed_updates=Update.ALL_TYPES
