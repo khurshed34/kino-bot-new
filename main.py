@@ -245,53 +245,12 @@ async def join_request_handler(
     }
 
     logging.info(
-        "JOIN REQUEST RECEIVED | USER=%s | CHANNEL=%s",
+        "JOIN REQUEST SAVED | USER=%s | CHANNEL=%s",
         user_id,
         join_request.chat.id
     )
 
     await save_database()
-
-
-# =========================
-# APPROVE JOIN REQUEST
-# =========================
-
-async def approve_user_request(user_id, context):
-    """
-    Кӯшиш мекунад заявкаи корбарро қабул кунад.
-    Агар корбар аллакай аъзо бошад, санҷиши обуна
-    дар функсияи check_subscription иҷро мешавад.
-    """
-
-    try:
-        result = await context.bot.approve_chat_join_request(
-            chat_id=REQUEST_CHANNEL,
-            user_id=user_id
-        )
-
-        if result:
-            db.setdefault("pending_requests", {})
-            db["pending_requests"].pop(str(user_id), None)
-
-            logging.info(
-                "JOIN REQUEST APPROVED | USER=%s",
-                user_id
-            )
-
-            await save_database()
-            return True, None
-
-        return False, "Telegram заявкаро қабул накард."
-
-    except Exception as error:
-        logging.warning(
-            "APPROVE REQUEST ERROR | USER=%s | %s",
-            user_id,
-            error
-        )
-
-        return False, str(error)
 
 
 # =========================
@@ -302,7 +261,22 @@ async def check_subscription(user_id, context):
     missing = []
     errors = []
 
+    pending = db.setdefault("pending_requests", {})
+
     for channel in REQUIRED_CHANNELS:
+
+        # Заявка ҳамчун шарти обуна ҳисоб мешавад.
+        # Бот онро қабул намекунад.
+        if (
+            channel["id"] == REQUEST_CHANNEL
+            and str(user_id) in pending
+        ):
+            logging.info(
+                "REQUEST VERIFIED | USER=%s",
+                user_id
+            )
+            continue
+
         try:
             member = await context.bot.get_chat_member(
                 chat_id=channel["id"],
@@ -345,6 +319,10 @@ async def check_subscription(user_id, context):
     return missing, errors
 
 
+# =========================
+# SUBSCRIPTION KEYBOARD
+# =========================
+
 def sub_keyboard(missing):
     buttons = []
 
@@ -385,7 +363,7 @@ async def show_subscription_status(
         return
 
     if missing:
-        missing_request = any(
+        request_missing = any(
             channel["id"] == REQUEST_CHANNEL
             for channel in missing
         )
@@ -395,20 +373,19 @@ async def show_subscription_status(
             for channel in missing
         )
 
-        if missing_request:
-            text = (
-                "❗ Шумо ҳанӯз ба ҳамаи каналҳо обуна нестед.\n\n"
-                f"{names}\n\n"
+        text = (
+            "❗ Шумо ҳанӯз ба ҳамаи каналҳо обуна нестед.\n\n"
+            f"{names}\n\n"
+        )
+
+        if request_missing:
+            text += (
                 "Ба канали заявка дархост фиристед.\n"
                 "Баъд ба бот баргашта, тугмаи "
-                "«✅ Санҷиши обуна»-ро пахш кунед.\n\n"
-                "🤖 Бот кӯшиш мекунад заявкаи шуморо "
-                "худаш қабул кунад."
+                "«✅ Санҷиши обуна»-ро пахш кунед."
             )
         else:
-            text = (
-                "❗ Шумо ҳанӯз ба ҳамаи каналҳо обуна нестед.\n\n"
-                f"{names}\n\n"
+            text += (
                 "Ба каналҳои дар боло нишондодашуда обуна шавед "
                 "ва баъд санҷишро пахш кунед."
             )
@@ -512,54 +489,12 @@ async def check_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    # Аввал кӯшиш мекунем заявкаи канали REQUEST-ро қабул кунем.
-    approved, approval_error = await approve_user_request(
-        user_id,
-        context
-    )
-
-    if approved:
-        await query.message.reply_text(
-            "✅ Заявкаи шумо аз тарафи бот қабул шуд!\n"
-            "🔎 Акнун обуна санҷида мешавад..."
-        )
-
-    # Баъд аз қабул кардан, обунаи ҳамаи каналҳоро месанҷем.
     missing, errors = await check_subscription(
         user_id,
         context
     )
 
-    if errors:
-        await show_subscription_status(
-            query.message,
-            missing,
-            errors
-        )
-        return
-
-    if missing:
-        request_missing = any(
-            channel["id"] == REQUEST_CHANNEL
-            for channel in missing
-        )
-
-        if request_missing and not approved:
-            logging.warning(
-                "REQUEST NOT APPROVED | USER=%s | ERROR=%s",
-                user_id,
-                approval_error
-            )
-
-            await query.message.reply_text(
-                "⚠️ Заявкаи шумо қабул карда нашуд.\n\n"
-                "Сабабҳои эҳтимолӣ:\n"
-                "• Шумо ҳанӯз ба канали заявка дархост нафиристодаед.\n"
-                "• Бот иҷозати қабул кардани заявкаро надорад.\n\n"
-                "Админ бояд дар канали заявка барои бот "
-                "иҷозати «Invite Users»-ро фаъол кунад."
-            )
-
+    if errors or missing:
         await show_subscription_status(
             query.message,
             missing,
@@ -904,7 +839,7 @@ def main():
     app.add_handler(CommandHandler("publish", publish_command))
     app.add_handler(CommandHandler("cancel", cancel_command))
 
-    # Қабули маълумоти Join Request аз Telegram
+    # Telegram бояд Join Request-ро ба бот фиристад.
     app.add_handler(
         ChatJoinRequestHandler(join_request_handler)
     )
