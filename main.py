@@ -37,7 +37,6 @@ STORAGE_CHANNEL = "@kusyi8"
 REQUEST_CHANNEL = -1004307552065
 
 REQUEST_LINK = "https://t.me/+lb1ZPri4VWs3ZTUy"
-
 INSTAGRAM_URL = "https://www.instagram.com/dunyo.kino90/"
 
 DB_FILE = "movies.json"
@@ -91,7 +90,6 @@ def load_db():
             data.setdefault("instagram_confirmed", [])
             data.setdefault("joined_at", {})
             data.setdefault("last_active", {})
-
             return data
 
     except Exception as error:
@@ -113,12 +111,7 @@ db = load_db()
 
 def save_local():
     with open(DB_FILE, "w", encoding="utf-8") as f:
-        json.dump(
-            db,
-            f,
-            ensure_ascii=False,
-            indent=2
-        )
+        json.dump(db, f, ensure_ascii=False, indent=2)
 
 
 def github_backup():
@@ -140,29 +133,17 @@ def github_backup():
     sha = None
 
     try:
-        req = urllib.request.Request(
-            url,
-            headers=headers
-        )
+        req = urllib.request.Request(url, headers=headers)
 
-        with urllib.request.urlopen(
-            req,
-            timeout=30
-        ) as response:
-            sha = json.loads(
-                response.read()
-            ).get("sha")
+        with urllib.request.urlopen(req, timeout=30) as response:
+            sha = json.loads(response.read()).get("sha")
 
     except urllib.error.HTTPError as error:
         if error.code != 404:
             logging.error("GitHub read error: %s", error)
             return
 
-    content = json.dumps(
-        db,
-        ensure_ascii=False,
-        indent=2
-    )
+    content = json.dumps(db, ensure_ascii=False, indent=2)
 
     payload = {
         "message": "Update Kino Bot database",
@@ -183,14 +164,8 @@ def github_backup():
     )
 
     try:
-        with urllib.request.urlopen(
-            req,
-            timeout=30
-        ) as response:
-            logging.info(
-                "GitHub backup OK: %s",
-                response.status
-            )
+        with urllib.request.urlopen(req, timeout=30) as response:
+            logging.info("GitHub backup OK: %s", response.status)
 
     except Exception as error:
         logging.error("GitHub backup failed: %s", error)
@@ -222,35 +197,17 @@ def is_admin(user_id):
 
 def admin_keyboard():
     return InlineKeyboardMarkup([
-        [
-            InlineKeyboardButton(
-                "➕ Иловаи кино",
-                callback_data="add"
-            )
-        ],
-        [
-            InlineKeyboardButton(
-                "🗑 Нест кардани кино",
-                callback_data="delete"
-            )
-        ],
-        [
-            InlineKeyboardButton(
-                "📊 Омори бот",
-                callback_data="stats"
-            )
-        ]
+        [InlineKeyboardButton("➕ Иловаи кино", callback_data="add")],
+        [InlineKeyboardButton("🗑 Нест кардани кино", callback_data="delete")],
+        [InlineKeyboardButton("📊 Омори бот", callback_data="stats")]
     ])
 
 
 # =========================
-# JOIN REQUEST HANDLER
+# JOIN REQUEST
 # =========================
 
-async def join_request_handler(
-    update: Update,
-    context: ContextTypes.DEFAULT_TYPE
-):
+async def join_request_handler(update, context):
     join_request = update.chat_join_request
 
     if not join_request:
@@ -266,10 +223,7 @@ async def join_request_handler(
         "date": join_request.date.isoformat()
     }
 
-    logging.info(
-        "JOIN REQUEST SAVED | USER=%s",
-        user_id
-    )
+    logging.info("JOIN REQUEST SAVED | USER=%s", user_id)
 
     await save_database()
 
@@ -282,19 +236,7 @@ async def check_subscription(user_id, context):
     missing = []
     errors = []
 
-    pending = db["pending_requests"]
-
     for channel in REQUIRED_CHANNELS:
-
-        # Дархости фиристодашуда ба канали заявка
-        # ҳамчун иҷрои ин шарт ҳисоб мешавад.
-
-        if (
-            channel["id"] == REQUEST_CHANNEL
-            and str(user_id) in pending
-        ):
-            continue
-
         try:
             member = await context.bot.get_chat_member(
                 chat_id=channel["id"],
@@ -404,7 +346,6 @@ async def show_subscription_status(
             "\n⚠️ Санҷиши баъзе каналҳо муваффақ нашуд.\n"
             "Бот бояд дар каналҳои зарурӣ иҷозати санҷиши аъзоён дошта бошад."
         )
-
     else:
         text += (
             "\nБа каналҳо ва Instagram гузаред. "
@@ -472,8 +413,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["movie_code"] = code
 
     missing, errors = await check_subscription(
-        user_id,
-        context
+        user_id, context
     )
 
     instagram_ok = (
@@ -500,10 +440,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # INSTAGRAM CONFIRMATION
 # =========================
 
-async def instagram_confirm(
-    update: Update,
-    context: ContextTypes.DEFAULT_TYPE
-):
+async def instagram_confirm(update, context):
     query = update.callback_query
     await query.answer()
 
@@ -528,8 +465,7 @@ async def instagram_confirm(
         return
 
     missing, errors = await check_subscription(
-        user_id,
-        context
+        user_id, context
     )
 
     if errors or missing:
@@ -557,10 +493,7 @@ async def instagram_confirm(
 # CHECK BUTTON
 # =========================
 
-async def check_button(
-    update: Update,
-    context: ContextTypes.DEFAULT_TYPE
-):
+async def check_button(update, context):
     query = update.callback_query
     await query.answer()
 
@@ -575,8 +508,7 @@ async def check_button(
         return
 
     missing, errors = await check_subscription(
-        user_id,
-        context
+        user_id, context
     )
 
     instagram_ok = (
@@ -619,15 +551,11 @@ async def calculate_stats(context):
     async def check_one(user_id):
         async with semaphore:
             return await check_subscription(
-                int(user_id),
-                context
+                int(user_id), context
             )
 
     results = await asyncio.gather(
-        *[
-            check_one(user_id)
-            for user_id in users
-        ],
+        *[check_one(user_id) for user_id in users],
         return_exceptions=True
     )
 
@@ -644,20 +572,8 @@ async def calculate_stats(context):
             telegram_ok += 1
 
     instagram_ok = len(
-        set(db["instagram_confirmed"])
-        & set(users)
+        set(db["instagram_confirmed"]) & set(users)
     )
-
-    all_ok = sum(
-        1
-        for user_id in users
-        if (
-            user_id in db["instagram_confirmed"]
-        )
-    )
-
-    # Шумораи пурра танҳо вақте ҳисоб мешавад,
-    # ки ҳам Telegram ва ҳам Instagram тасдиқ шудаанд.
 
     complete = 0
 
@@ -684,14 +600,11 @@ async def calculate_stats(context):
         active = db["last_active"].get(str(user_id))
 
         try:
-            if joined:
-                if datetime.fromisoformat(joined).date() == today:
-                    new_today += 1
+            if joined and datetime.fromisoformat(joined).date() == today:
+                new_today += 1
 
-            if active:
-                if datetime.fromisoformat(active).date() == today:
-                    active_today += 1
-
+            if active and datetime.fromisoformat(active).date() == today:
+                active_today += 1
         except Exception:
             pass
 
@@ -713,10 +626,7 @@ async def calculate_stats(context):
 # ADMIN BUTTONS
 # =========================
 
-async def admin_buttons(
-    update: Update,
-    context: ContextTypes.DEFAULT_TYPE
-):
+async def admin_buttons(update, context):
     query = update.callback_query
     await query.answer()
 
@@ -769,10 +679,7 @@ async def admin_buttons(
 # ADMIN VIDEO
 # =========================
 
-async def admin_video(
-    update: Update,
-    context: ContextTypes.DEFAULT_TYPE
-):
+async def admin_video(update, context):
     if not is_admin(update.effective_user.id):
         return
 
@@ -823,10 +730,7 @@ async def admin_video(
 # ADMIN PHOTO
 # =========================
 
-async def admin_photo(
-    update: Update,
-    context: ContextTypes.DEFAULT_TYPE
-):
+async def admin_photo(update, context):
     if not is_admin(update.effective_user.id):
         return
 
@@ -845,10 +749,7 @@ async def admin_photo(
 # ADMIN TEXT
 # =========================
 
-async def admin_text(
-    update: Update,
-    context: ContextTypes.DEFAULT_TYPE
-):
+async def admin_text(update, context):
     if not is_admin(update.effective_user.id):
         return
 
