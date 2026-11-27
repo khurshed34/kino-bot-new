@@ -7,6 +7,8 @@ import urllib.request
 import urllib.error
 import logging
 
+from datetime import datetime, timezone, timedelta
+
 from telegram import (
     Update,
     InlineKeyboardButton,
@@ -36,6 +38,8 @@ REQUEST_CHANNEL = -1004307552065
 
 REQUEST_LINK = "https://t.me/+lb1ZPri4VWs3ZTUy"
 
+INSTAGRAM_URL = "https://www.instagram.com/dunyo.kino90/"
+
 DB_FILE = "movies.json"
 
 GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")
@@ -44,6 +48,8 @@ REPOSITORY = os.getenv(
     "khurshed34/kino-bot-new"
 )
 BRANCH = os.getenv("GITHUB_REF_NAME", "main")
+
+DUSHANBE_TZ = timezone(timedelta(hours=5))
 
 REQUIRED_CHANNELS = [
     {
@@ -82,6 +88,10 @@ def load_db():
             data.setdefault("users", [])
             data.setdefault("requests", 0)
             data.setdefault("pending_requests", {})
+            data.setdefault("instagram_confirmed", [])
+            data.setdefault("joined_at", {})
+            data.setdefault("last_active", {})
+
             return data
 
     except Exception as error:
@@ -91,7 +101,10 @@ def load_db():
         "movies": {},
         "users": [],
         "requests": 0,
-        "pending_requests": {}
+        "pending_requests": {},
+        "instagram_confirmed": [],
+        "joined_at": {},
+        "last_active": {}
     }
 
 
@@ -152,7 +165,7 @@ def github_backup():
     )
 
     payload = {
-        "message": "Save movie database",
+        "message": "Update Kino Bot database",
         "content": base64.b64encode(
             content.encode("utf-8")
         ).decode("utf-8"),
@@ -186,6 +199,17 @@ def github_backup():
 async def save_database():
     save_local()
     await asyncio.to_thread(github_backup)
+
+
+def add_user(user_id):
+    user_id = int(user_id)
+    now = datetime.now(DUSHANBE_TZ).isoformat()
+
+    if user_id not in db["users"]:
+        db["users"].append(user_id)
+        db["joined_at"][str(user_id)] = now
+
+    db["last_active"][str(user_id)] = now
 
 
 # =========================
@@ -237,17 +261,14 @@ async def join_request_handler(
 
     user_id = join_request.from_user.id
 
-    db.setdefault("pending_requests", {})
-
     db["pending_requests"][str(user_id)] = {
         "chat_id": join_request.chat.id,
         "date": join_request.date.isoformat()
     }
 
     logging.info(
-        "JOIN REQUEST SAVED | USER=%s | CHANNEL=%s",
-        user_id,
-        join_request.chat.id
+        "JOIN REQUEST SAVED | USER=%s",
+        user_id
     )
 
     await save_database()
@@ -261,20 +282,17 @@ async def check_subscription(user_id, context):
     missing = []
     errors = []
 
-    pending = db.setdefault("pending_requests", {})
+    pending = db["pending_requests"]
 
     for channel in REQUIRED_CHANNELS:
 
-        # Заявка ҳамчун шарти обуна ҳисоб мешавад.
-        # Бот онро қабул намекунад.
+        # Дархости фиристодашуда ба канали заявка
+        # ҳамчун иҷрои ин шарт ҳисоб мешавад.
+
         if (
             channel["id"] == REQUEST_CHANNEL
             and str(user_id) in pending
         ):
-            logging.info(
-                "REQUEST VERIFIED | USER=%s",
-                user_id
-            )
             continue
 
         try:
@@ -284,13 +302,6 @@ async def check_subscription(user_id, context):
             )
 
             status = member.status
-
-            logging.info(
-                "SUB CHECK | USER=%s | CHANNEL=%s | STATUS=%s",
-                user_id,
-                channel["id"],
-                status
-            )
 
             subscribed = status in (
                 "member",
@@ -323,7 +334,7 @@ async def check_subscription(user_id, context):
 # SUBSCRIPTION KEYBOARD
 # =========================
 
-def sub_keyboard(missing):
+def sub_keyboard(missing, user_id):
     buttons = []
 
     for channel in missing:
@@ -334,9 +345,24 @@ def sub_keyboard(missing):
             )
         ])
 
+    if user_id not in db["instagram_confirmed"]:
+        buttons.append([
+            InlineKeyboardButton(
+                "📸 Обуна ба Instagram",
+                url=INSTAGRAM_URL
+            )
+        ])
+
+        buttons.append([
+            InlineKeyboardButton(
+                "✅ Ман обуна шудам",
+                callback_data="instagram_confirm"
+            )
+        ])
+
     buttons.append([
         InlineKeyboardButton(
-            "✅ Санҷиши обуна",
+            "🔄 Санҷиши обуна",
             callback_data="check"
         )
     ])
@@ -351,49 +377,44 @@ def sub_keyboard(missing):
 async def show_subscription_status(
     message,
     missing,
-    errors
+    errors,
+    user_id
 ):
+    telegram_missing = "\n".join(
+        "❌ " + channel["name"]
+        for channel in missing
+    )
+
+    instagram_missing = (
+        user_id not in db["instagram_confirmed"]
+    )
+
+    text = (
+        "🎬 Барои дастрасӣ ба кино шартҳои зеринро иҷро кунед:\n\n"
+    )
+
+    if telegram_missing:
+        text += telegram_missing + "\n"
+
+    if instagram_missing:
+        text += "❌ Instagram: @dunyo.kino90\n"
+
     if errors:
-        await message.reply_text(
-            "⚠️ Бот натавонист обунаро дар баъзе каналҳо санҷад.\n\n"
-            "Эҳтимол бот дар яке аз каналҳо админ нест "
-            "ё иҷозатҳои зарурӣ надорад.\n\n"
-            "Тафсилоти хато дар GitHub Actions Logs сабт шудааст."
-        )
-        return
-
-    if missing:
-        request_missing = any(
-            channel["id"] == REQUEST_CHANNEL
-            for channel in missing
+        text += (
+            "\n⚠️ Санҷиши баъзе каналҳо муваффақ нашуд.\n"
+            "Бот бояд дар каналҳои зарурӣ иҷозати санҷиши аъзоён дошта бошад."
         )
 
-        names = "\n".join(
-            "❌ " + channel["name"]
-            for channel in missing
+    else:
+        text += (
+            "\nБа каналҳо ва Instagram гузаред. "
+            "Пас аз иҷрои шартҳо тугмаи тасдиқро пахш кунед."
         )
 
-        text = (
-            "❗ Шумо ҳанӯз ба ҳамаи каналҳо обуна нестед.\n\n"
-            f"{names}\n\n"
-        )
-
-        if request_missing:
-            text += (
-                "Ба канали заявка дархост фиристед.\n"
-                "Баъд ба бот баргашта, тугмаи "
-                "«✅ Санҷиши обуна»-ро пахш кунед."
-            )
-        else:
-            text += (
-                "Ба каналҳои дар боло нишондодашуда обуна шавед "
-                "ва баъд санҷишро пахш кунед."
-            )
-
-        await message.reply_text(
-            text,
-            reply_markup=sub_keyboard(missing)
-        )
+    await message.reply_text(
+        text,
+        reply_markup=sub_keyboard(missing, user_id)
+    )
 
 
 # =========================
@@ -429,9 +450,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     user_id = user.id
 
-    if user_id not in db["users"]:
-        db["users"].append(user_id)
-        await save_database()
+    add_user(user_id)
+    await save_database()
 
     if is_admin(user_id) and not context.args:
         await update.message.reply_text(
@@ -456,11 +476,16 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context
     )
 
-    if errors or missing:
+    instagram_ok = (
+        user_id in db["instagram_confirmed"]
+    )
+
+    if errors or missing or not instagram_ok:
         await show_subscription_status(
             update.message,
             missing,
-            errors
+            errors,
+            user_id
         )
         return
 
@@ -472,10 +497,70 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # =========================
+# INSTAGRAM CONFIRMATION
+# =========================
+
+async def instagram_confirm(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+):
+    query = update.callback_query
+    await query.answer()
+
+    user_id = query.from_user.id
+
+    if user_id not in db["instagram_confirmed"]:
+        db["instagram_confirmed"].append(user_id)
+        await save_database()
+
+    await query.message.reply_text(
+        "📸 Тасдиқи Instagram сабт шуд.\n"
+        "🔄 Акнун ҳамаи шартҳоро месанҷем..."
+    )
+
+    code = context.user_data.get("movie_code")
+
+    if not code:
+        await query.message.reply_text(
+            "Барои гирифтани кино аз канали мо "
+            "тугмаи «Тамошо»-ро пахш кунед."
+        )
+        return
+
+    missing, errors = await check_subscription(
+        user_id,
+        context
+    )
+
+    if errors or missing:
+        await show_subscription_status(
+            query.message,
+            missing,
+            errors,
+            user_id
+        )
+        return
+
+    await query.message.reply_text(
+        "✅ Шартҳо иҷро шуданд!\n"
+        "🎬 Кино фиристода мешавад..."
+    )
+
+    await send_movie(
+        query.message.chat_id,
+        context,
+        code
+    )
+
+
+# =========================
 # CHECK BUTTON
 # =========================
 
-async def check_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def check_button(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+):
     query = update.callback_query
     await query.answer()
 
@@ -494,16 +579,21 @@ async def check_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context
     )
 
-    if errors or missing:
+    instagram_ok = (
+        user_id in db["instagram_confirmed"]
+    )
+
+    if errors or missing or not instagram_ok:
         await show_subscription_status(
             query.message,
             missing,
-            errors
+            errors,
+            user_id
         )
         return
 
     await query.message.reply_text(
-        "✅ Обунаи шумо тасдиқ шуд!\n"
+        "✅ Шартҳо иҷро шуданд!\n"
         "🎬 Кино фиристода мешавад..."
     )
 
@@ -515,10 +605,118 @@ async def check_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # =========================
+# ADMIN STATISTICS
+# =========================
+
+async def calculate_stats(context):
+    users = db["users"]
+
+    telegram_ok = 0
+    unknown = 0
+
+    semaphore = asyncio.Semaphore(3)
+
+    async def check_one(user_id):
+        async with semaphore:
+            return await check_subscription(
+                int(user_id),
+                context
+            )
+
+    results = await asyncio.gather(
+        *[
+            check_one(user_id)
+            for user_id in users
+        ],
+        return_exceptions=True
+    )
+
+    for result in results:
+        if isinstance(result, Exception):
+            unknown += 1
+            continue
+
+        missing, errors = result
+
+        if errors:
+            unknown += 1
+        elif not missing:
+            telegram_ok += 1
+
+    instagram_ok = len(
+        set(db["instagram_confirmed"])
+        & set(users)
+    )
+
+    all_ok = sum(
+        1
+        for user_id in users
+        if (
+            user_id in db["instagram_confirmed"]
+        )
+    )
+
+    # Шумораи пурра танҳо вақте ҳисоб мешавад,
+    # ки ҳам Telegram ва ҳам Instagram тасдиқ шудаанд.
+
+    complete = 0
+
+    for result, user_id in zip(results, users):
+        if isinstance(result, Exception):
+            continue
+
+        missing, errors = result
+
+        if (
+            not errors
+            and not missing
+            and user_id in db["instagram_confirmed"]
+        ):
+            complete += 1
+
+    today = datetime.now(DUSHANBE_TZ).date()
+
+    new_today = 0
+    active_today = 0
+
+    for user_id in users:
+        joined = db["joined_at"].get(str(user_id))
+        active = db["last_active"].get(str(user_id))
+
+        try:
+            if joined:
+                if datetime.fromisoformat(joined).date() == today:
+                    new_today += 1
+
+            if active:
+                if datetime.fromisoformat(active).date() == today:
+                    active_today += 1
+
+        except Exception:
+            pass
+
+    return {
+        "total": len(users),
+        "telegram": telegram_ok,
+        "instagram": instagram_ok,
+        "complete": complete,
+        "incomplete": max(0, len(users) - complete),
+        "unknown": unknown,
+        "new_today": new_today,
+        "active_today": active_today,
+        "movies": len(db["movies"]),
+        "requests": db["requests"]
+    }
+
+
+# =========================
 # ADMIN BUTTONS
 # =========================
 
-async def admin_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def admin_buttons(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+):
     query = update.callback_query
     await query.answer()
 
@@ -541,10 +739,29 @@ async def admin_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     elif query.data == "stats":
         await query.message.reply_text(
+            "⏳ Омори каналҳо санҷида мешавад..."
+        )
+
+        stats = await calculate_stats(context)
+
+        text = (
             "📊 ОМОРИ БОТ\n\n"
-            f"👥 Истифодабарандагон: {len(db['users'])}\n"
-            f"🎬 Киноҳо: {len(db['movies'])}\n"
-            f"🔎 Дархостҳо: {db['requests']}"
+            f"👥 Ҳамагӣ истифодабарандагон: {stats['total']}\n\n"
+            f"✅ Telegram: {stats['telegram']}\n"
+            f"📸 Instagram (тасдиқшуда): {stats['instagram']}\n"
+            f"🏆 Ҳамаи шартҳоро иҷро кардаанд: {stats['complete']}\n"
+            f"❌ Шартҳо пурра иҷро нашудаанд: {stats['incomplete']}\n"
+            f"⚠️ Санҷида нашуданд: {stats['unknown']}\n\n"
+            f"🆕 Истифодабарандагони нав имрӯз: {stats['new_today']}\n"
+            f"🟢 Фаъол имрӯз: {stats['active_today']}\n\n"
+            f"🎬 Киноҳо дар база: {stats['movies']}\n"
+            f"🔎 Дархостҳои кино: {stats['requests']}\n\n"
+            "ℹ️ Instagram автоматӣ санҷида намешавад."
+        )
+
+        await query.message.reply_text(
+            text,
+            reply_markup=admin_keyboard()
         )
 
 
@@ -552,7 +769,10 @@ async def admin_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ADMIN VIDEO
 # =========================
 
-async def admin_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def admin_video(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+):
     if not is_admin(update.effective_user.id):
         return
 
@@ -603,7 +823,10 @@ async def admin_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ADMIN PHOTO
 # =========================
 
-async def admin_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def admin_photo(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+):
     if not is_admin(update.effective_user.id):
         return
 
@@ -622,7 +845,10 @@ async def admin_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ADMIN TEXT
 # =========================
 
-async def admin_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def admin_text(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+):
     if not is_admin(update.effective_user.id):
         return
 
@@ -816,6 +1042,8 @@ async def cancel_command(update, context):
 async def post_init(app):
     logging.info("KINO BOT STARTED")
     logging.info("Movies loaded: %s", len(db["movies"]))
+    logging.info("Users loaded: %s", len(db["users"]))
+    logging.info("Instagram: %s", INSTAGRAM_URL)
     logging.info("Request channel: %s", REQUEST_CHANNEL)
 
 
@@ -839,7 +1067,6 @@ def main():
     app.add_handler(CommandHandler("publish", publish_command))
     app.add_handler(CommandHandler("cancel", cancel_command))
 
-    # Telegram бояд Join Request-ро ба бот фиристад.
     app.add_handler(
         ChatJoinRequestHandler(join_request_handler)
     )
@@ -848,6 +1075,13 @@ def main():
         CallbackQueryHandler(
             check_button,
             pattern="^check$"
+        )
+    )
+
+    app.add_handler(
+        CallbackQueryHandler(
+            instagram_confirm,
+            pattern="^instagram_confirm$"
         )
     )
 
